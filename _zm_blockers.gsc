@@ -13,7 +13,7 @@
 #insert scripts\shared\shared.gsh;
 
 #using scripts\zm\_util;
-#using scripts\zm\_bb;
+//#using scripts\zm\_bb;
 #using scripts\zm\_zm_audio;
 #using scripts\zm\_zm_daily_challenges;
 #using scripts\zm\_zm_laststand;
@@ -121,11 +121,17 @@ function door_init()
 			}
 		}
 
-	}	
+	}
+
+	solo = false;
+	wait (0.05);
+    level flag::wait_till( "initial_blackscreen_passed" );
+	solo = level flag::get("solo_game");
 
 	// Door trigger types
-	if ( !isdefined( self.script_noteworthy ) )
+	if ( !isdefined( self.script_noteworthy ) || self.script_noteworthy == "bank" && solo)
 	{
+		//remove bank doors on solo
 		self.script_noteworthy = "default";
 	}
 
@@ -147,6 +153,10 @@ function door_init()
 	if( isdefined( self.zombie_cost ) )
 	{
 		cost = self.zombie_cost;
+		if(solo){
+			cost -= 250;
+			self.zombie_cost = cost;
+		}
 	}
 
 	self SetCursorHint( "HINT_NOICON" );
@@ -155,7 +165,7 @@ function door_init()
 	
 	// MM (03/09/10) - Allow activation at any time in order to make it easier to open bigger doors.
 //	self UseTriggerRequireLookAt();
-	self thread door_think(); 
+	
 
 	// MM - Added support for electric doors.  Don't have to add them to level scripts
 	if ( isdefined( self.script_noteworthy ) )
@@ -196,10 +206,449 @@ function door_init()
 		{
 			self sethintstring(&"ZOMBIE_DOOR_ACTIVATE_COUNTER", cost);
 			return;
+		}else if(self.script_noteworthy == "bank"){
+			level.deposited[self.target] = 0; //set the deposited points to 0 before hintstring
+			self bank_door_update();
+		}else{
+			self zm_utility::set_hint_string( self, "default_buy_door", cost );
+		}
+	}else{
+		self zm_utility::set_hint_string( self, "default_buy_door", cost );
+	}
+
+	self thread door_think(); 
+	
+}
+
+//
+//	Wait to be opened!
+//	self is a door trigger
+function door_think()
+{
+	self endon("kill_door_think");
+
+	cost = 1000;
+	if( isdefined( self.zombie_cost ) )
+	{
+		cost = self.zombie_cost;
+	}
+	
+	//self SetHintLowPriority( true );
+
+	while( true )
+	{
+		switch( self.script_noteworthy )
+		{
+		case "local_electric_door":
+			if (!IS_TRUE(self.local_power_on))
+				self waittill( "local_power_on" );
+			if (!IS_TRUE(self._door_open)) 
+			{
+				self door_opened(cost,true);
+				if (!isdefined(self.power_cost))
+					self.power_cost = 0;
+				self.power_cost += 200;
+			}
+			self setHintString("");
+
+			if( IS_TRUE( level.local_doors_stay_open ) )
+			{
+				return;
+			}
+
+			//Else door can be closed
+			wait 3;
+			self waittill_door_can_close();
+			self door_block();
+			if (IS_TRUE(self._door_open)) 
+			{
+				self door_opened(cost,true);
+			}
+			self sethintstring(&"ZOMBIE_NEED_LOCAL_POWER");
+			wait 3;
+			continue;
+			
+		case "electric_door":
+			if (!IS_TRUE(self.power_on))
+				self waittill( "power_on" );
+			if (!IS_TRUE(self._door_open)) 
+			{
+				self door_opened(cost,true);
+				if (!isdefined(self.power_cost))
+					self.power_cost = 0;
+				self.power_cost += 200;
+			}
+			self setHintString("");
+
+			if( IS_TRUE( level.local_doors_stay_open ) )
+			{
+				return;
+			}
+
+			//Else door can be closed
+			wait 3;
+			self waittill_door_can_close();
+			self door_block();
+			if (IS_TRUE(self._door_open)) 
+			{
+				self door_opened(cost,true);
+			}
+			self sethintstring(&"ZOMBIE_NEED_POWER");
+			wait 3;
+			continue;
+			//self self_and_flag_wait( "power_on" );
+			//self door_opened(cost);
+			//return;
+
+		case "electric_buyable_door":
+			if (!IS_TRUE(self.power_on))
+				self waittill( "power_on" );
+				
+			self zm_utility::set_hint_string( self, "default_buy_door", cost );
+//			self UseTriggerRequireLookAt();
+
+			if ( !self door_buy() )
+			{
+				continue;
+			}
+			break;
+
+		case "delay_door":	// set timer and explode
+			if ( !self door_buy() )
+			{
+				continue;
+			}
+
+			self door_delay();
+			break;
+
+		case "bank":
+			if ( !self bank_door() )
+			{
+				continue;
+			}
+			break;
+
+		default:
+			if(isDefined( level._default_door_custom_logic))
+			{
+				self [[level._default_door_custom_logic]]();
+				break;
+			}		
+			if ( !self door_buy() )
+			{
+				continue;
+			}
+			break;
+		}
+
+		self door_opened(cost);
+		if(!level flag::get("door_can_close"))
+		{
+			break;
+		}	
+	}
+}
+
+//
+// DEBRIS - these are "doors" that consist of various pieces of piled objects
+//		they lift up and disappear when bought.
+//
+function debris_init()
+{
+
+	wait (0.05);
+    level flag::wait_till( "initial_blackscreen_passed" );
+	solo = level flag::get("solo_game");
+	
+	cost = 1000;
+	if( isdefined( self.zombie_cost ) )
+	{
+		cost = self.zombie_cost;
+		if(solo){
+			cost -= 250;
+			self.zombie_cost = cost;
 		}
 	}
 
-	self zm_utility::set_hint_string( self, "default_buy_door", cost );
+	self zm_utility::set_hint_string( self, "default_buy_debris", cost );
+	self setCursorHint( "HINT_NOICON" );
+	
+	if( isdefined (self.script_flag)  && !isdefined( level.flag[self.script_flag] ) )
+	{
+		level flag::init( self.script_flag ); 
+	}
+	
+	// Look for zbarrier debris and initialize it.
+	if ( isdefined( self.target ) )
+	{
+		targets = GetEntArray( self.target, "targetname" );
+		foreach( target in targets )
+		{
+			if ( target IsZBarrier() )
+			{
+				for( i=0; i < target GetNumZBarrierPieces(); i++ )
+				{
+					target SetZBarrierPieceState( i, "closed" );		
+				}
+			}
+		}
+		
+		a_nd_targets = GetNodeArray( self.target, "targetname" );
+		foreach( nd_target in a_nd_targets )
+		{
+			//this is for navvolume traversals
+			if( isdefined( nd_target.script_noteworthy ) && nd_target.script_noteworthy == STR_NAV_VOLUME_TRAVERSAL )
+			{
+				UnlinkTraversal( nd_target );
+			}
+		}
+	}
+//	self UseTriggerRequireLookAt();
+	self thread blocker_update_prompt_visibility();
+	self thread debris_think(); 
+}
+
+
+//
+//	self is a debris trigger
+//
+function debris_think()
+{
+	solo = false;
+	wait (0.05);
+    level flag::wait_till( "initial_blackscreen_passed" );
+	solo = level flag::get("solo_game");
+
+	bank = false;
+	if(isdefined(self.script_noteworthy) && self.script_noteworthy == "bank" && !solo){
+		bank = true;
+		level.deposited[self.target] = 0; //set the deposited points to 0 before hintstring
+		self bank_door_update();
+	}
+
+	// cut the navmesh
+	junk = getentarray( self.target, "targetname" ); 
+	for( i = 0; i < junk.size; i++ )
+	{	
+		if( isdefined( junk[i].script_noteworthy ) )
+		{
+			if( junk[i].script_noteworthy == "clip" )
+			{
+				junk[i] disconnectpaths(); 
+			}
+		}
+	}
+	open = false;
+	while( !open )
+	{
+		if(bank){
+			while(! self bank_door()){
+				continue;
+			}
+			
+			open = true;
+		}else{
+			self waittill( "trigger", who, force ); 
+			if( !who UseButtonPressed() )
+			{
+				continue;
+			}
+
+			if( IS_DRINKING(who.is_drinking) )
+			{
+				continue;
+			}
+	
+			if( who zm_utility::in_revive_trigger() )
+			{
+				continue;
+			}
+			
+			if( zm_utility::is_player_valid( who ) )
+			{
+				// Can we afford this door?
+				players = GetPlayers();
+				if ( /*players.size == 1 &&*/ who zm_score::can_player_purchase( self.zombie_cost ) )
+				{
+					// solo buy
+					who zm_score::minus_to_player_score( self.zombie_cost ); 
+					scoreevents::processScoreEvent( "open_door", who );
+					demo::bookmark( "zm_player_door", gettime(), who );
+					who zm_stats::increment_client_stat( "doors_purchased" );
+					who zm_stats::increment_player_stat( "doors_purchased" );
+					who zm_stats::increment_challenge_stat( "SURVIVALIST_BUY_DOOR" );
+					open = true;
+				}
+				else
+				{
+					zm_utility::play_sound_at_pos( "no_purchase", self.origin );
+					who zm_audio::create_and_play_dialog( "general", "outofmoney" );
+					continue;
+				}
+			}
+		}
+	}		
+					
+	self notify( "kill_debris_prompt_thread" );
+	
+	// Okay remove the debris
+	// delete the stuff
+	junk = getentarray( self.target, "targetname" ); 
+
+	// Set any flags called
+	if( isdefined( self.script_flag ) )
+	{
+		tokens = Strtok( self.script_flag, "," );
+		for ( i=0; i<tokens.size; i++ )
+		{
+			level flag::set( tokens[i] );
+		}
+	}
+
+	zm_utility::play_sound_at_pos( "purchase", self.origin );
+	level notify ("junk purchased");
+
+	move_ent = undefined;
+	a_clip = [];
+	for( i = 0; i < junk.size; i++ )
+	{	
+		junk[i] connectpaths(); 
+
+		if( isdefined( junk[i].script_noteworthy ) )
+		{
+			if( junk[i].script_noteworthy == "clip" )
+			{
+				a_clip[ a_clip.size ] = junk[i];
+				continue;
+			}
+		}
+
+		struct = undefined;
+		if ( junk[i] IsZBarrier() )
+		{
+			move_ent = junk[i];
+			junk[i] thread debris_zbarrier_move();
+		}
+		else if( isdefined( junk[i].script_linkTo ) )
+		{
+			struct = struct::get( junk[i].script_linkTo, "script_linkname" );
+			if( isdefined( struct ) )
+			{
+				move_ent = junk[i];
+				junk[i] thread debris_move( struct );
+			}
+			else
+			{
+				junk[i] Delete();
+			}
+		}
+		else if( isdefined( junk[i].target) )
+		{
+			struct = struct::get( junk[i].target, "targetname" );
+			if( isdefined( struct ) )
+			{
+				move_ent = junk[i];
+				junk[i] thread debris_move( struct );
+			}
+			else
+			{
+				junk[i] Delete();
+			}
+		}
+		else
+		{
+			junk[i] Delete();
+		}
+	}
+	
+	// Connect NavVolume traversals
+	a_nd_targets = GetNodeArray( self.target, "targetname" );
+	foreach( nd_target in a_nd_targets )
+	{
+		//this is for navvolume traversals
+		if( isdefined( nd_target.script_noteworthy ) && nd_target.script_noteworthy == STR_NAV_VOLUME_TRAVERSAL )
+		{
+			LinkTraversal( nd_target );
+		}
+	}
+
+	// get all trigs, we might want a trigger on both sides
+	// of some junk sometimes
+	all_trigs = getentarray( self.target, "target" ); 
+	for( i = 0; i < all_trigs.size; i++ )
+	{
+		all_trigs[i] delete(); 
+	}
+
+	for( i=0; i<a_clip.size; i++ )
+	{
+		a_clip[i] Delete();
+	}
+		
+	if( isdefined( move_ent ) )
+	{
+		move_ent waittill( "movedone" );
+	}
+	
+}
+
+function bank_door()
+//returns true if bank door can open, self is the bank door
+{
+	dep_amount = 250;
+	open = false;
+	cost = 1000;
+	if(isDefined(self.zombie_cost)){
+		cost = self.zombie_cost;
+	}
+	if(!isDefined(level.deposited[self.target])){//initialise level.depo here if needed
+		level.deposited[self.target] = 0;
+	}
+	opening_player = undefined; //initialise the variable to hold the player that opens the door
+	while(!self bank_door_update()){
+		self waittill( "trigger", player, force );
+		can_buy = false;
+		if(!(player UseButtonPressed()) || (player zm_utility::in_revive_trigger()) || IS_DRINKING(player.is_drinking) ){
+			can_buy = false;
+		}else if( isdefined( level.custom_door_buy_check ) && !player [[ level.custom_door_buy_check ]]( self ) ){
+			can_buy =  false;	 	
+		}else if(player zm_score::can_player_purchase( dep_amount )){
+			can_buy = true;
+		}
+
+		if(can_buy){
+			player zm_score::minus_to_player_score( dep_amount );
+			level.deposited[self.target] += dep_amount;
+			zm_utility::play_sound_at_pos( "purchase", self.origin );
+		}else{
+			zm_utility::play_sound_at_pos( "no_purchase", self.doors[0].origin );
+			player zm_audio::create_and_play_dialog( "general", "outofmoney" );
+		}
+		opening_player = player;
+	}
+
+	if(isdefined(level._door_open_rumble_func))
+	{
+		opening_player thread [[ level._door_open_rumble_func ]]();
+	}
+
+	open = true;
+	return open;
+}
+
+function bank_door_update(){
+	ready = (level.deposited[self.target] == self.zombie_cost);
+	these_doors = [];
+	these_doors = GetEntArray(self.target, "target");
+	if(these_doors.size == 0){
+		these_doors[0] = self;
+	}
+	foreach(door in these_doors){
+		door SetHintString("Press ^3[{+activate}]^7 to Deposit [^1" + level.deposited[door.target] + "^7] / [^2" + door.zombie_cost + "^7]");
+		door.ready = ready;
+	}
+	return ready;
 }
 
 
@@ -763,133 +1212,7 @@ function waittill_door_can_close()
 }
 
 
-//
-//	Wait to be opened!
-//	self is a door trigger
-function door_think()
-{
-	self endon("kill_door_think");
 
-	// maybe the door the should just bust open instead of slowly opening.
-	// maybe just destroy the door, could be two players from opposite sides..
-	// breaking into chunks seems best.
-	// or I cuold just give it no collision
-
-	cost = 1000;
-	if( isdefined( self.zombie_cost ) )
-	{
-		cost = self.zombie_cost;
-	}
-	
-	self SetHintLowPriority( true );
-
-	while( 1 )
-	{
-		switch( self.script_noteworthy )
-		{
-		case "local_electric_door":
-			if (!IS_TRUE(self.local_power_on))
-				self waittill( "local_power_on" );
-			if (!IS_TRUE(self._door_open)) 
-			{
-				self door_opened(cost,true);
-				if (!isdefined(self.power_cost))
-					self.power_cost = 0;
-				self.power_cost += 200;
-			}
-			self setHintString("");
-
-			if( IS_TRUE( level.local_doors_stay_open ) )
-			{
-				return;
-			}
-
-			//Else door can be closed
-			wait 3;
-			self waittill_door_can_close();
-			self door_block();
-			if (IS_TRUE(self._door_open)) 
-			{
-				self door_opened(cost,true);
-			}
-			self sethintstring(&"ZOMBIE_NEED_LOCAL_POWER");
-			wait 3;
-			continue;
-			
-		case "electric_door":
-			if (!IS_TRUE(self.power_on))
-				self waittill( "power_on" );
-			if (!IS_TRUE(self._door_open)) 
-			{
-				self door_opened(cost,true);
-				if (!isdefined(self.power_cost))
-					self.power_cost = 0;
-				self.power_cost += 200;
-			}
-			self setHintString("");
-
-			if( IS_TRUE( level.local_doors_stay_open ) )
-			{
-				return;
-			}
-
-			//Else door can be closed
-			wait 3;
-			self waittill_door_can_close();
-			self door_block();
-			if (IS_TRUE(self._door_open)) 
-			{
-				self door_opened(cost,true);
-			}
-			self sethintstring(&"ZOMBIE_NEED_POWER");
-			wait 3;
-			continue;
-			//self self_and_flag_wait( "power_on" );
-			//self door_opened(cost);
-			//return;
-
-		case "electric_buyable_door":
-			if (!IS_TRUE(self.power_on))
-				self waittill( "power_on" );
-				
-			self zm_utility::set_hint_string( self, "default_buy_door", cost );
-//			self UseTriggerRequireLookAt();
-
-			if ( !self door_buy() )
-			{
-				continue;
-			}
-			break;
-
-		case "delay_door":	// set timer and explode
-			if ( !self door_buy() )
-			{
-				continue;
-			}
-
-			self door_delay();
-			break;
-
-		default:
-			if(isDefined( level._default_door_custom_logic))
-			{
-				self [[level._default_door_custom_logic]]();
-				break;
-			}		
-			if ( !self door_buy() )
-			{
-				continue;
-			}
-			break;
-		}
-
-		self door_opened(cost);
-		if(!level flag::get("door_can_close"))
-		{
-			break;
-		}	
-	}
-}
 
 function self_and_flag_wait( msg )
 {
@@ -1172,251 +1495,7 @@ function self_disconnectpaths()
 	self DisconnectPaths();
 }
 
-//
-// DEBRIS - these are "doors" that consist of various pieces of piled objects
-//		they lift up and disappear when bought.
-//
-function debris_init()
-{
-	cost = 1000;
-	if( isdefined( self.zombie_cost ) )
-	{
-		cost = self.zombie_cost;
-	}
 
-	self zm_utility::set_hint_string( self, "default_buy_debris", cost );
-	self setCursorHint( "HINT_NOICON" );
-	
-	if( isdefined (self.script_flag)  && !isdefined( level.flag[self.script_flag] ) )
-	{
-		level flag::init( self.script_flag ); 
-	}
-	
-	// Look for zbarrier debris and initialize it.
-	if ( isdefined( self.target ) )
-	{
-		targets = GetEntArray( self.target, "targetname" );
-		foreach( target in targets )
-		{
-			if ( target IsZBarrier() )
-			{
-				for( i=0; i < target GetNumZBarrierPieces(); i++ )
-				{
-					target SetZBarrierPieceState( i, "closed" );		
-				}
-			}
-		}
-		
-		a_nd_targets = GetNodeArray( self.target, "targetname" );
-		foreach( nd_target in a_nd_targets )
-		{
-			//this is for navvolume traversals
-			if( isdefined( nd_target.script_noteworthy ) && nd_target.script_noteworthy == STR_NAV_VOLUME_TRAVERSAL )
-			{
-				UnlinkTraversal( nd_target );
-			}
-		}
-	}
-
-//	self UseTriggerRequireLookAt();
-	self thread blocker_update_prompt_visibility();
-	self thread debris_think(); 
-}
-
-
-//
-//	self is a debris trigger
-//
-function debris_think()
-{
-	if( isDefined( level.custom_debris_function ) )
-	{
-		self [[ level.custom_debris_function ]]();
-	}	
-
-	// cut the navmesh
-	junk = getentarray( self.target, "targetname" ); 
-	for( i = 0; i < junk.size; i++ )
-	{	
-		if( isdefined( junk[i].script_noteworthy ) )
-		{
-			if( junk[i].script_noteworthy == "clip" )
-			{
-				junk[i] disconnectpaths(); 
-			}
-		}
-	}
-	
-	while( 1 )
-	{
-		self waittill( "trigger", who, force ); 
-
-		if(GetDvarInt( "zombie_unlock_all") > 0 || IS_TRUE( force ) )
-		{
-			//bypass.
-		}
-		else
-		{	
-			if( !who UseButtonPressed() )
-			{
-				continue;
-			}
-
-			if( IS_DRINKING(who.is_drinking) )
-			{
-				continue;
-			}
-	
-			if( who zm_utility::in_revive_trigger() )
-			{
-				continue;
-			}
-		}
-		
-		if( zm_utility::is_player_valid( who ) )
-		{
-			// Can we afford this door?
-			players = GetPlayers();
-			if(GetDvarInt( "zombie_unlock_all") > 0)
-			{
-				// bypass charge.
-			}
-			else if ( /*players.size == 1 &&*/ who zm_score::can_player_purchase( self.zombie_cost ) )
-			{
-				// solo buy
-				who zm_score::minus_to_player_score( self.zombie_cost ); 
-				scoreevents::processScoreEvent( "open_door", who );
-				demo::bookmark( "zm_player_door", gettime(), who );
-				who zm_stats::increment_client_stat( "doors_purchased" );
-				who zm_stats::increment_player_stat( "doors_purchased" );
-				who zm_stats::increment_challenge_stat( "SURVIVALIST_BUY_DOOR" );
-			}
-/*
-			else if( level.team_pool[ who.team_num ].score >= self.zombie_cost )
-			{
-				// team buy
-				who zm_score::minus_to_team_score( self.zombie_cost ); 
-			}
-			else if( level.team_pool[ who.team_num ].score + who.score >= self.zombie_cost )
-			{
-				// team funds + player funds
-				team_points = level.team_pool[ who.team_num ].score;
-				who zm_score::minus_to_player_score( self.zombie_cost - team_points ); 
-				who zm_score::minus_to_team_score( team_points ); 
-			}
-*/
-			else
-			{
-				zm_utility::play_sound_at_pos( "no_purchase", self.origin );
-				who zm_audio::create_and_play_dialog( "general", "outofmoney" );
-				continue;
-			}
-					
-			self notify( "kill_debris_prompt_thread" );
-			
-			// Okay remove the debris
-			// delete the stuff
-			junk = getentarray( self.target, "targetname" ); 
-
-			// Set any flags called
-			if( isdefined( self.script_flag ) )
-			{
-				tokens = Strtok( self.script_flag, "," );
-				for ( i=0; i<tokens.size; i++ )
-				{
-					level flag::set( tokens[i] );
-				}
-			}
-
-			zm_utility::play_sound_at_pos( "purchase", self.origin );
-			level notify ("junk purchased");
-
-			move_ent = undefined;
-			a_clip = [];
-			for( i = 0; i < junk.size; i++ )
-			{	
-				junk[i] connectpaths(); 
-
-				if( isdefined( junk[i].script_noteworthy ) )
-				{
-					if( junk[i].script_noteworthy == "clip" )
-					{
-						a_clip[ a_clip.size ] = junk[i];
-						continue;
-					}
-				}
-
-				struct = undefined;
-				if ( junk[i] IsZBarrier() )
-				{
-					move_ent = junk[i];
-					junk[i] thread debris_zbarrier_move();
-				}
-				else if( isdefined( junk[i].script_linkTo ) )
-				{
-					struct = struct::get( junk[i].script_linkTo, "script_linkname" );
-					if( isdefined( struct ) )
-					{
-						move_ent = junk[i];
-						junk[i] thread debris_move( struct );
-					}
-					else
-					{
-						junk[i] Delete();
-					}
-				}
-				else if( isdefined( junk[i].target) )
-				{
-					struct = struct::get( junk[i].target, "targetname" );
-					if( isdefined( struct ) )
-					{
-						move_ent = junk[i];
-						junk[i] thread debris_move( struct );
-					}
-					else
-					{
-						junk[i] Delete();
-					}
-				}
-				else
-				{
-					junk[i] Delete();
-				}
-			}
-			
-			// Connect NavVolume traversals
-			a_nd_targets = GetNodeArray( self.target, "targetname" );
-			foreach( nd_target in a_nd_targets )
-			{
-				//this is for navvolume traversals
-				if( isdefined( nd_target.script_noteworthy ) && nd_target.script_noteworthy == STR_NAV_VOLUME_TRAVERSAL )
-				{
-					LinkTraversal( nd_target );
-				}
-			}
-
-			// get all trigs, we might want a trigger on both sides
-			// of some junk sometimes
-			all_trigs = getentarray( self.target, "target" ); 
-			for( i = 0; i < all_trigs.size; i++ )
-			{
-				all_trigs[i] delete(); 
-			}
-
-			for( i=0; i<a_clip.size; i++ )
-			{
-				a_clip[i] Delete();
-			}
-				
-			if( isdefined( move_ent ) )
-			{
-				move_ent waittill( "movedone" );
-			}
-			
-			break;
-		}
-	}
-}
 
 function debris_zbarrier_move()
 {
