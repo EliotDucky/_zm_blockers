@@ -8,4 +8,5 @@
 
  ## In Game
  Solo: door price is reduced by 250 points
+ 
  Coop: each time a player presses activate on a door, they add 250 points to the shared pool
