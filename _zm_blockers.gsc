@@ -3343,4 +3343,3 @@ function quantum_bomb_open_nearest_door_result( position )
 		}
 	}
 }
-
