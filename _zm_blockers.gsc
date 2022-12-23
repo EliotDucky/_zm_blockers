@@ -645,7 +645,9 @@ function bank_door_update(){
 		these_doors[0] = self;
 	}
 	foreach(door in these_doors){
-		door SetHintString("Press ^3[{+activate}]^7 to Deposit [^1" + level.deposited[door.target] + "^7] / [^2" + door.zombie_cost + "^7]");
+		if(!ready){
+			door SetHintString("Press ^3[{+activate}]^7 to Deposit [^1&&1^7] / [^2&&2^7]", level.deposited[door.target], door.zombie_cost);
+		}
 		door.ready = ready;
 	}
 	return ready;
@@ -3343,3 +3345,4 @@ function quantum_bomb_open_nearest_door_result( position )
 		}
 	}
 }
+
